@@ -1,0 +1,106 @@
+name: V-DRUM LAB CI
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  JUCE_TAG: "8.0.8"
+
+jobs:
+  build-windows:
+    name: Build Windows x64 (Drive ${{ matrix.drive }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        drive: [ C, D ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Prepare workspace on Drive ${{ matrix.drive }}
+        shell: pwsh
+        run: |
+          $targetDir = "${{ matrix.drive }}:\V-DRUM-LAB"
+          
+          # Если мы не на целевом диске, копируем туда файлы
+          if ("${{ github.workspace }}" -ne $targetDir) {
+            Write-Host "Copying files to $targetDir..."
+            New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+            Copy-Item -Path "${{ github.workspace }}\*" -Destination $targetDir -Recurse -Force
+          }
+          
+          # Переходим в рабочую директорию
+          Set-Location $targetDir
+          Write-Host "Current directory: $(Get-Location)"
+          
+          # Сохраняем путь для следующих шагов
+          echo "WORKING_DIR=$targetDir" >> $env:GITHUB_ENV
+
+      - name: Cache JUCE
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WORKING_DIR }}/JUCE
+          key: juce-${{ env.JUCE_TAG }}-windows
+
+      - name: Fetch JUCE if missing
+        shell: pwsh
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          if (-not (Test-Path "JUCE/CMakeLists.txt")) {
+            Write-Host "Cloning JUCE..."
+            git clone --depth 1 --branch $env:JUCE_TAG https://github.com/juce-framework/JUCE.git JUCE
+          } else {
+            Write-Host "JUCE is already present."
+          }
+
+      - name: Configure CMake
+        shell: pwsh
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DVDRUM_COPY_PLUGIN_AFTER_BUILD=OFF
+
+      - name: Build Plugin
+        shell: pwsh
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          cmake --build build --config Release --parallel
+
+      - name: Verify Build Artefacts
+        shell: pwsh
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          $vst3Path = "build/VDrumLab_artefacts/Release/VST3"
+          $vst3File = Get-ChildItem -Path $vst3Path -Recurse -Filter "*.vst3" | Select-Object -First 1
+          
+          if (-not $vst3File) { 
+            throw "CRITICAL ERROR: VST3 file was not found in $vst3Path" 
+          }
+          
+          Write-Host "SUCCESS: VST3 found at $($vst3File.FullName)"
+          echo "VST3_PATH=$($vst3File.FullName)" >> $env:GITHUB_ENV
+
+      - name: Upload VST3 Artefact
+        if: matrix.drive == 'C'
+        uses: actions/upload-artifact@v4
+        with:
+          name: V-DRUM-LAB-VST3-Win64
+          path: ${{ env.WORKING_DIR }}/build/VDrumLab_artefacts/Release/VST3/
+          retention-days: 30
+
+      - name: Upload Standalone Artefact
+        if: matrix.drive == 'C'
+        uses: actions/upload-artifact@v4
+        with:
+          name: V-DRUM-LAB-Standalone-Win64
+          path: ${{ env.WORKING_DIR }}/build/VDrumLab_artefacts/Release/Standalone/
+          retention-days: 30
