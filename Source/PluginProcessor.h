@@ -31,6 +31,15 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
+    // Параметры плагина
+    juce::AudioProcessorValueTreeState apvts;
+
 private:
+    juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+    
+    float masterVolume = 1.0f;
+    float currentTempo = 120.0f;
+    double sampleRate = 44100.0;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VDrumLabAudioProcessor)
 };
